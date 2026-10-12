@@ -24,10 +24,27 @@ subsystem, and trusts the demo root CA. Files on prod are kept under
 policy live, `Set-ProdWdac Absent` removes it and reboots prod.
 
 The CI segment uses `.github/workflows/sign.yml`, triggered by publishing a
-`vX.Y.Z` release from the browser during the talk. It needs a GitHub `signing`
-environment with the `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AAS_ACCOUNT`,
-`AAS_PROFILE` and `AAS_ENDPOINT` variables for Artifact Signing over OIDC. The
-repo must be public so prod can download the release asset.
+`vX.Y.Z` release from the browser during the talk. The repo must be public so
+prod can download the release asset. To set up the signing identity add the
+Artifact Signing details (needs `Az.Accounts` and `Az.Resources`) after
+connecting to the tenant:
+
+```powershell
+Connect-AzAccount -Tenant '<tenant id>' -UseDeviceAuthentication
+
+$initParams = @{
+    ComputerName = '192.168.64.18'
+    Credential = 'vagrant'
+    ArtifactSigningAccount = '<account>'
+    ArtifactSigningProfile = '<certificate profile>'
+}
+./tools/Initialize-Demo.ps1 @initParams
+```
+
+This creates an Entra app with a federated credential for the workflow's
+`signing` environment and gives it the signer role on the certificate profile.
+It prints the GitHub environment secrets and `gh` commands needed at the
+end. See [Cleanup](#cleanup) to remove it again.
 
 ## Running
 
@@ -42,3 +59,18 @@ ahead.
 
 The steps live in `segments/`, one `#region` per step with `# NOTE:` lines as
 speaker notes.
+
+## Cleanup
+
+Remove the WDAC policy (reboots prod) and the Entra app, service principal and
+role assignment used by the release workflow:
+
+```powershell
+Connect-AzAccount -Tenant '<tenant id>' -UseDeviceAuthentication
+./tools/Reset-Demo.ps1 -RemoveWdac -RemoveArtifactSigning
+```
+
+`-RemoveArtifactSigning` uses the IDs Initialize-Demo saved in
+`state/azure.json`, CI signing stops working until `Initialize-Demo.ps1` is
+run again with the Artifact Signing details. Everything else on prod lives in
+`C:\PSConfEU-MiniConf` and can be deleted.

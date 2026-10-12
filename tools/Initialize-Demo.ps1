@@ -24,6 +24,19 @@ The WDAC policy is created when Set-ProdWdac Enforced is run.
 Everything the setup and demos write on prod is kept under
 C:\PSConfEU-MiniConf, delete it to clean up.
 
+When -ArtifactSigningAccount is set it also sets up the CI signing identity in
+Azure: a temporary Entra app and service principal for the demo, a federated
+credential trusting the GitHub OIDC token of the release workflow's 'signing'
+environment, and the certificate profile signer role on the Artifact Signing
+certificate profile. The details are saved in state/azure.json so
+Reset-Demo.ps1 -RemoveArtifactSigning can delete it again. The GitHub
+environment settings needed by the workflow are printed at the end.
+
+The Azure session isn't created by this script, connect first with
+Connect-AzAccount (e.g. -UseDeviceAuthentication) to the tenant holding the
+Artifact Signing account. All subscriptions available to that session are
+searched for the account.
+
 .PARAMETER ComputerName
 The Windows host used as prod.
 
@@ -37,8 +50,15 @@ The GitHub repo running the release workflow.
 .PARAMETER TimeStampServer
 RFC 3161 timestamp server used for local signing.
 
+.PARAMETER ArtifactSigningAccount
+The Artifact Signing account name, the subscription, resource group, and
+tenant are found automatically.
+
+.PARAMETER ArtifactSigningProfile
+The certificate profile in the account that the workflow signs with.
+
 .PARAMETER Force
-Recreate the demo certificates and WDAC policy even if they already exist.
+Recreate the demo certificates even if they already exist.
 
 .PARAMETER SkipProd
 Don't configure the prod host.
@@ -63,6 +83,14 @@ param (
     $TimeStampServer = 'http://timestamp.digicert.com',
 
     [Parameter()]
+    [string]
+    $ArtifactSigningAccount,
+
+    [Parameter()]
+    [string]
+    $ArtifactSigningProfile,
+
+    [Parameter()]
     [switch]
     $Force,
 
@@ -72,6 +100,10 @@ param (
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([bool]$ArtifactSigningAccount -ne [bool]$ArtifactSigningProfile) {
+    throw '-ArtifactSigningAccount and -ArtifactSigningProfile must be set together'
+}
 
 $root = Split-Path -Path $PSScriptRoot -Parent
 $UserName = $Credential.UserName
@@ -114,7 +146,163 @@ else {
     Write-Host 'Demo certificates already exist, use -Force to recreate'
 }
 
+# Artifact Signing identity for the release workflow
+$githubEnvironment = $null
+if ($ArtifactSigningAccount) {
+    foreach ($module in 'Az.Accounts', 'Az.Resources') {
+        if (-not (Get-Module -Name $module -ListAvailable)) {
+            throw "The $module module is needed for the Artifact Signing setup: Install-PSResource -Name Az.Accounts, Az.Resources"
+        }
+    }
+
+    if (-not (Get-AzContext)) {
+        throw 'No Azure session, run Connect-AzAccount (e.g. -UseDeviceAuthentication) first'
+    }
+
+    # Find the account in whichever subscription it lives in. Listing by type
+    # and filtering locally avoids -ExpandProperties, which needs Get-AzResource
+    # to work out an API version for the provider and fails quietly when it
+    # can't.
+    $resourceType = 'Microsoft.CodeSigning/codeSigningAccounts'
+    $account = $null
+    $searched = [System.Collections.Generic.List[string]]::new()
+    foreach ($subscription in Get-AzSubscription) {
+        $searched.Add("$($subscription.Name) ($($subscription.Id))")
+        $null = Set-AzContext -Subscription $subscription.Id -Tenant $subscription.TenantId
+        $account = Get-AzResource -ResourceType $resourceType |
+            Where-Object Name -EQ $ArtifactSigningAccount |
+            Select-Object -First 1
+        if ($account) {
+            $tenantId = $subscription.TenantId
+            break
+        }
+    }
+    if (-not $account) {
+        throw "Artifact Signing account '$ArtifactSigningAccount' not found, searched: $($searched -join ', ')"
+    }
+
+    # Read the account and profile through ARM with an API version the
+    # provider advertises, preferring the newest stable one over previews.
+    $apiVersions = (Get-AzResourceProvider -ProviderNamespace Microsoft.CodeSigning).ResourceTypes |
+        Where-Object ResourceTypeName -EQ 'codeSigningAccounts' |
+        ForEach-Object ApiVersions |
+        Sort-Object -Descending
+    $apiVersion = $apiVersions | Where-Object { $_ -notlike '*-preview' } | Select-Object -First 1
+    if (-not $apiVersion) {
+        $apiVersion = $apiVersions | Select-Object -First 1
+    }
+    $getArm = {
+        param ($ResourceId)
+        $response = Invoke-AzRestMethod -Method GET -Path "$($ResourceId)?api-version=$apiVersion"
+        if ($response.StatusCode -ne 200) {
+            throw "GET $ResourceId failed with $($response.StatusCode): $($response.Content)"
+        }
+        $response.Content | ConvertFrom-Json
+    }
+
+    $endpoint = (& $getArm $account.ResourceId).properties.accountUri
+    $profileId = "$($account.ResourceId)/certificateProfiles/$ArtifactSigningProfile"
+    $null = & $getArm $profileId
+
+    # The job runs in the 'signing' environment so the OIDC subject is the
+    # environment, not the tag. Uses GitHub's immutable format with the owner
+    # and repo IDs.
+    $repo = Invoke-RestMethod -Uri "https://api.github.com/repos/$GitHubRepo"
+    $subject = "repo:$($repo.owner.login)@$($repo.owner.id)/$($repo.name)@$($repo.id):environment:signing"
+
+    $role = 'Artifact Signing Certificate Profile Signer', 'Trusted Signing Certificate Profile Signer' |
+        ForEach-Object { Get-AzRoleDefinition -Name $_ -ErrorAction SilentlyContinue } |
+        Select-Object -First 1
+    if (-not $role) {
+        throw 'Could not find the Artifact Signing Certificate Profile Signer role definition'
+    }
+
+    # Reuse the app from a previous run if it still exists.
+    $azureStatePath = Get-DemoPath state, azure.json
+    $app = $null
+    if (Test-Path -LiteralPath $azureStatePath) {
+        $azureState = Get-Content -LiteralPath $azureStatePath -Raw | ConvertFrom-Json
+        $app = Get-AzADApplication -ObjectId $azureState.AppObjectId -ErrorAction SilentlyContinue
+    }
+    if (-not $app) {
+        Write-Host 'Creating the Entra app and service principal'
+        $app = New-AzADApplication -DisplayName 'PSConfEU-MiniConf-Signing'
+    }
+    $sp = Get-AzADServicePrincipal -ApplicationId $app.AppId -ErrorAction SilentlyContinue
+    if (-not $sp) {
+        $sp = New-AzADServicePrincipal -ApplicationId $app.AppId
+    }
+
+    $existingCred = Get-AzADAppFederatedCredential -ApplicationObjectId $app.Id |
+        Where-Object Subject -EQ $subject
+    if (-not $existingCred) {
+        Write-Host "Adding federated credential for '$subject'"
+        $credParams = @{
+            ApplicationObjectId = $app.Id
+            Name = 'github-release-signing'
+            Issuer = 'https://token.actions.githubusercontent.com'
+            Subject = $subject
+            Audience = 'api://AzureADTokenExchange'
+        }
+        $null = New-AzADAppFederatedCredential @credParams
+    }
+
+    $assignmentParams = @{
+        ObjectId = $sp.Id
+        RoleDefinitionId = $role.Id
+        Scope = $profileId
+    }
+    if (-not (Get-AzRoleAssignment @assignmentParams -ErrorAction SilentlyContinue)) {
+        Write-Host "Assigning '$($role.Name)' on the certificate profile"
+        # ObjectType skips the directory lookup that can fail while the new
+        # service principal is still replicating.
+        $null = New-AzRoleAssignment @assignmentParams -ObjectType ServicePrincipal
+    }
+
+    [PSCustomObject]@{
+        TenantId = $tenantId
+        AppObjectId = $app.Id
+        AppId = $app.AppId
+        ServicePrincipalId = $sp.Id
+        RoleDefinitionId = $role.Id
+        Scope = $profileId
+    } | ConvertTo-Json | Set-Content -LiteralPath $azureStatePath
+
+    $githubEnvironment = [ordered]@{
+        AZURE_CLIENT_ID = $app.AppId
+        AZURE_TENANT_ID = $tenantId
+        AAS_ACCOUNT = $ArtifactSigningAccount
+        AAS_PROFILE = $ArtifactSigningProfile
+        AAS_ENDPOINT = $endpoint
+    }
+}
+
+# Printed at the very end so it isn't lost in the prod setup output.
+$showGitHubSetup = {
+    if (-not $githubEnvironment) {
+        return
+    }
+
+    Write-Host ''
+    Write-Host "GitHub setup for '$GitHubRepo'"
+    Write-Host 'These go in the "signing" environment as secrets, the workflow reads'
+    Write-Host 'secrets.* so the values are masked in the logs.'
+    Write-Host ''
+    $githubEnvironment.GetEnumerator() | ForEach-Object {
+        Write-Host ('    {0,-16} {1}' -f $_.Key, $_.Value)
+    }
+    Write-Host ''
+    Write-Host 'Create the environment, limited to v* release tags, and set them with gh:'
+    Write-Host ''
+    Write-Host "    gh api -X PUT repos/$GitHubRepo/environments/signing --input - <<< '{`"deployment_branch_policy`": {`"protected_branches`": false, `"custom_branch_policies`": true}}'"
+    Write-Host "    gh api -X POST repos/$GitHubRepo/environments/signing/deployment-branch-policies -f name='v*' -f type=tag"
+    $githubEnvironment.GetEnumerator() | ForEach-Object {
+        Write-Host "    gh secret set $($_.Key) --env signing --repo $GitHubRepo --body '$($_.Value)'"
+    }
+}
+
 if ($SkipProd) {
+    & $showGitHubSetup
     return
 }
 
@@ -324,3 +512,5 @@ Invoke-Prod -ErrorAction Stop {
     Import-Certificate -FilePath "$ProdPath/certs/CA.cer" -CertStoreLocation Cert:\LocalMachine\Root |
         Select-Object Subject, Thumbprint, NotAfter
 } $prodPath
+
+& $showGitHubSetup

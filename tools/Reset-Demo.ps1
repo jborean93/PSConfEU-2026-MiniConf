@@ -12,21 +12,35 @@ Local:
     pre-signs the WDAC demo scripts.
 
 Prod:
-    Wipes the demo folder (except certs and policy), resets the CurrentUser execution
-    policy to RemoteSigned and removes any demo certificates from the
-    TrustedPublisher and Disallowed stores.
+    Wipes the demo folder (except certs and policy), resets the CurrentUser
+    execution policy to RemoteSigned and removes any demo certificates from
+    the TrustedPublisher and Disallowed stores.
 
 WDAC is not touched unless -RemoveWdac is set, which reboots prod if the
 policy was enforced.
 
+The Artifact Signing identity is not touched unless -RemoveArtifactSigning is
+set, which deletes the role assignment, service principal and Entra app
+created by Initialize-Demo.ps1. CI signing stops working until it is set up
+again. Connect to the tenant with Connect-AzAccount first.
+
 .PARAMETER RemoveWdac
 Also remove the WDAC policy from prod.
+
+.PARAMETER RemoveArtifactSigning
+Also delete the Entra app, service principal and role assignment used by the
+release workflow.
+
 #>
 [CmdletBinding()]
 param (
     [Parameter()]
     [switch]
-    $RemoveWdac
+    $RemoveWdac,
+
+    [Parameter()]
+    [switch]
+    $RemoveArtifactSigning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -35,6 +49,46 @@ Import-Module (Join-Path $PSScriptRoot '..' 'DemoKit') -Force
 
 $config = Get-DemoConfig
 $signer = Get-DemoCertificate Signer
+
+# Artifact Signing identity
+if ($RemoveArtifactSigning) {
+    $azureStatePath = Get-DemoPath state, azure.json
+    if (Test-Path -LiteralPath $azureStatePath) {
+        $azureState = Get-Content -LiteralPath $azureStatePath -Raw | ConvertFrom-Json
+
+        if (-not (Get-AzContext)) {
+            throw "No Azure session, run Connect-AzAccount -Tenant $($azureState.TenantId) first"
+        }
+
+        # The role assignment lives on the certificate profile, it would be
+        # left orphaned if only the app was deleted.
+        $subscriptionId = ($azureState.Scope -split '/')[2]
+        $null = Set-AzContext -Subscription $subscriptionId -Tenant $azureState.TenantId
+        $assignmentParams = @{
+            ObjectId = $azureState.ServicePrincipalId
+            RoleDefinitionId = $azureState.RoleDefinitionId
+            Scope = $azureState.Scope
+        }
+        if (Get-AzRoleAssignment @assignmentParams -ErrorAction SilentlyContinue) {
+            Write-Host 'Removing the certificate profile role assignment'
+            Remove-AzRoleAssignment @assignmentParams
+        }
+
+        if (Get-AzADServicePrincipal -ObjectId $azureState.ServicePrincipalId -ErrorAction SilentlyContinue) {
+            Write-Host 'Removing the service principal'
+            Remove-AzADServicePrincipal -ObjectId $azureState.ServicePrincipalId
+        }
+        if (Get-AzADApplication -ObjectId $azureState.AppObjectId -ErrorAction SilentlyContinue) {
+            Write-Host 'Removing the Entra app and its federated credential'
+            Remove-AzADApplication -ObjectId $azureState.AppObjectId
+        }
+
+        Remove-Item -LiteralPath $azureStatePath
+    }
+    else {
+        Write-Host 'No Artifact Signing identity recorded in state/azure.json, nothing to remove'
+    }
+}
 
 # Local state
 $work = Get-DemoPath state, work

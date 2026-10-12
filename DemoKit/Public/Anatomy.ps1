@@ -258,7 +258,10 @@ Function Show-AuthenticodeAnatomy {
             $ekus = @(Format-Eku -Certificate $cert | ForEach-Object { "$(& $e $_.Name) [$($c.Dim)]$($_.Oid)[/]" }) -join ', '
             New-TreeNode "[$($c.Who)]$(& $e $cert.Subject)[/]" @(
                 New-TreeNode "Issued by: $(& $e $cert.Issuer)"
-                New-TreeNode "Valid: $($cert.NotBefore.ToString('yyyy-MM-dd HH:mm')) to $($cert.NotAfter.ToString('yyyy-MM-dd HH:mm')) [$($c.Dim)]($lifetime)[/]"
+                # UTC to match the timestamp time shown under WHEN.
+                $validFrom = $cert.NotBefore.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                $validTo = $cert.NotAfter.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                New-TreeNode "Valid: $validFrom to $validTo UTC [$($c.Dim)]($lifetime)[/]"
                 if ($ekus) { New-TreeNode "EKU: $ekus" }
                 New-TreeNode "Thumbprint: [$($c.Dim)]$($cert.Thumbprint)[/]"
             )

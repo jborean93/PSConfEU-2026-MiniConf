@@ -1,6 +1,6 @@
 $script:Stops = @(
     @{
-        Label = 'Start'
+        Label = 'Intro'
         Title = 'Sign of the Times'
         Subtitle = 'PowerShell and Authenticode'
         Summary = ''
@@ -49,6 +49,36 @@ $script:Stops = @(
     }
 )
 
+Function Get-JourneyMapMarkup {
+    <#
+    .SYNOPSIS
+    Gets the Spectre markup for the breadcrumb of the talk with the current
+    stop highlighted.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory, Position = 0)]
+        [ValidateRange(0, 7)]
+        [int]
+        $Stop
+    )
+
+    $parts = for ($i = 0; $i -lt $script:Stops.Count; $i++) {
+        $label = $script:Stops[$i].Label
+        if ($i -eq $Stop) {
+            "[$($script:Colors.OnTrust) on $($script:Colors.Trust) bold] $label [/]"
+        }
+        elseif ($i -lt $Stop) {
+            "[$($script:Colors.Dim)]$label[/]"
+        }
+        else {
+            $label
+        }
+    }
+
+    "  " + ($parts -join " [$($script:Colors.Dim)]›[/] ")
+}
+
 Function Show-JourneyMap {
     <#
     .SYNOPSIS
@@ -62,20 +92,7 @@ Function Show-JourneyMap {
         $Stop
     )
 
-    $parts = for ($i = 1; $i -lt $script:Stops.Count; $i++) {
-        $label = $script:Stops[$i].Label
-        if ($i -eq $Stop) {
-            "[black on $($script:Colors.Trust) bold] $label [/]"
-        }
-        elseif ($i -lt $Stop) {
-            "[$($script:Colors.Dim)]$label[/]"
-        }
-        else {
-            $label
-        }
-    }
-
-    Write-SpectreHost ("  " + ($parts -join " [$($script:Colors.Dim)]›[/] "))
+    Write-SpectreHost (Get-JourneyMapMarkup -Stop $Stop)
 }
 
 Function Show-Stop {
@@ -97,10 +114,8 @@ Function Show-Stop {
     Write-SpectreFigletText -Text $info.Title -Color $script:Colors.Trust | Out-Host
     Write-SpectreHost "  [italic]$(Get-SpectreEscapedText $info.Subtitle)[/]"
     Write-SpectreHost ''
-    if ($Stop -gt 0) {
-        Show-JourneyMap -Stop $Stop
-        Write-SpectreHost ''
-    }
+    Show-JourneyMap -Stop $Stop
+    Write-SpectreHost ''
     if ($info.Summary) {
         Format-SpectrePanel -Data (Get-SpectreEscapedText $info.Summary) -Color $script:Colors.Dim -Expand | Out-Host
     }

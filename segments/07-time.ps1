@@ -34,9 +34,12 @@ Invoke-Prod {
 The timestamp authority vouched that the signature existed while the
 certificate was still valid, so the signature stays valid after the
 certificate expires. Without a timestamp, it dies with the certificate.
+Compare the certificate's validity under WHO and the timestamp under WHEN with
+the current time.
 #>
-Show-AuthenticodeAnatomy ./countdown/WithTimestamp.ps1 -Expand When
-Show-AuthenticodeAnatomy ./countdown/NoTimestamp.ps1 -Expand When
+"Current time: $([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) UTC"
+Show-AuthenticodeAnatomy ./countdown/WithTimestamp.ps1 -Expand Who, When
+Show-AuthenticodeAnatomy ./countdown/NoTimestamp.ps1 -Expand Who, When
 #endregion
 
 #region Thanks

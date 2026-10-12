@@ -5,7 +5,7 @@ Demos for my PSConfEU 2026 MiniConf talk. Everything runs in a terminal: a
 
 ## Requirements
 
-* Local: PowerShell 7.6+, `PwshSpectreConsole`, `OpenAuthenticode`
+* Local: PowerShell 7.6+, `PwshSpectreConsole`, `OpenAuthenticode`, `openssl`
 * Prod: Windows with the OpenSSH server installed and an admin account,
   PowerShell 7 is installed with winget if missing
 
@@ -52,7 +52,7 @@ end. See [Cleanup](#cleanup) to remove it again.
 
 ```bash
 ./tools/Reset-Demo.ps1 -RemoveWdac   # before every run
-pwsh -NoExit -File ./Start-Talk.ps1  # optionally add -Stop <segment>
+pwsh -NoExit -File ./Start-Talk.ps1  # optionally add -Stop <segment>, -LightMode
 ```
 
 `F9` inserts the next step into the prompt, `F8` the previous one, and `Enter`

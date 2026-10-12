@@ -75,7 +75,7 @@ Function Show-DemoFile {
     }
 
     if (Get-Command -Name bat -CommandType Application -ErrorAction SilentlyContinue) {
-        $text | bat --style=numbers,header --paging=never --file-name $name
+        $text | bat --style=numbers,header --paging=never --theme $script:Colors.BatTheme --file-name $name
     }
     else {
         $text

@@ -11,8 +11,11 @@ Function Import-DemoSegment {
 
     .DESCRIPTION
     Each '#region <title>' ... '#endregion' block in a segment file is a step.
-    Lines starting with '# NOTE:' are speaker notes for reading the file, they
-    are not inserted into the prompt.
+    A block comment at the start of the step is its description, shown in a
+    panel above the prompt. Lines starting with '# NOTE:' are speaker notes
+    for reading the file. A '# NOCLEAR' line keeps the previous output on
+    screen instead of clearing it for the step. None of these are inserted
+    into the prompt.
     #>
     [CmdletBinding()]
     param (
@@ -28,14 +31,29 @@ Function Import-DemoSegment {
     foreach ($file in Get-ChildItem -Path $Path -Filter '*.ps1' | Sort-Object Name) {
         $content = Get-Content -LiteralPath $file.FullName -Raw
         foreach ($match in [regex]::Matches($content, $pattern)) {
-            $code = $match.Groups['code'].Value -split '\r?\n' |
-                Where-Object { $_ -notmatch '^\s*# NOTE:' }
+            $lines = $match.Groups['code'].Value -split '\r?\n'
+            $noClear = [bool]($lines -match '^\s*# NOCLEAR\s*$')
+            $code = ($lines |
+                    Where-Object { $_ -notmatch '^\s*# (NOTE:|NOCLEAR\s*$)' }) -join "`n"
+
+            # Unwrap the description into paragraphs so the panel can wrap it
+            # to the terminal width.
+            $description = ''
+            $descMatch = [regex]::Match($code, '(?s)^\s*<#(?<desc>.*?)#>')
+            if ($descMatch.Success) {
+                $code = $code.Substring($descMatch.Length)
+                $description = ($descMatch.Groups['desc'].Value.Trim() -split '\n\s*\n' | ForEach-Object {
+                        ($_ -split '\s*\n\s*') -join ' '
+                    }) -join "`n`n"
+            }
 
             $script:DemoSteps.Add([PSCustomObject]@{
                     Index = $script:DemoSteps.Count
                     Segment = $file.BaseName
                     Title = $match.Groups['title'].Value.Trim()
-                    Code = ($code -join "`n").Trim()
+                    Description = $description
+                    NoClear = $noClear
+                    Code = $code.Trim()
                 })
         }
     }
@@ -110,9 +128,41 @@ Function Write-DemoStep {
     $script:DemoIndex++
 
     [PSConsoleReadLine]::RevertLine()
-    # Start with a blank line so the step's block comment begins on its own
-    # line under the prompt, the title is only used by Get-DemoStep.
-    [PSConsoleReadLine]::Insert("`n$($step.Code)")
+
+    if ($step.NoClear) {
+        # Keep the previous output on screen, only replace the current empty
+        # prompt line.
+        [Console]::Write("`r$($PSStyle.EraseLine)")
+    }
+    else {
+        # Start the step on a clear screen, the previous output stays in the
+        # terminal's scrollback. Keep the journey map at the top so it's clear
+        # which section we're in.
+        [Console]::Write("`e[H`e[2J")
+        $stop = [int]($step.Segment -replace '^(\d+).*', '$1')
+
+        # Output from a key handler is discarded, render the markup to text
+        # and write it to the console directly.
+        $map = [Spectre.Console.Markup]::new((Get-JourneyMapMarkup -Stop $stop)) | Out-SpectreHost
+        [Console]::Write("$map`n`n")
+    }
+
+    if ($step.Description) {
+        $panelParams = @{
+            Data = Get-SpectreEscapedText $step.Description
+            Header = " $(Get-SpectreEscapedText $step.Title) "
+            Color = $script:Colors.Trust
+            Expand = $true
+        }
+        # Out-SpectreHost returns the rendered text, output from a key handler
+        # is discarded so write it to the console directly.
+        $panel = Format-SpectrePanel @panelParams | Out-SpectreHost
+        [Console]::Write("$panel`n")
+    }
+
+    # Redraw the prompt under the panel, or at the top for steps without one.
+    [PSConsoleReadLine]::InvokePrompt($null, [Console]::CursorTop)
+    [PSConsoleReadLine]::Insert($step.Code)
 }
 
 Function Register-DemoKeyHandler {

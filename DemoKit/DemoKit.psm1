@@ -31,18 +31,10 @@ if (Test-Path -LiteralPath $configPath) {
     }
 }
 
-# Each Authenticode question has its own colour used throughout the talk.
-# Green/red are reserved for pass/fail.
-$script:Colors = @{
-    What = 'DeepSkyBlue1'
-    Who = 'Orchid'
-    When = 'Gold1'
-    Trust = 'Aqua'
-    Pass = 'Green'
-    Fail = 'Red'
-    Dim = 'Grey50'
-}
 
 foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'Public') -Filter '*.ps1') {
     . $file.FullName
 }
+
+# Dark mode by default, Start-Talk.ps1 -LightMode switches it.
+Set-DemoTheme

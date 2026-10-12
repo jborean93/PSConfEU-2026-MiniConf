@@ -105,7 +105,7 @@ Function Show-TrustTrace {
             return
         }
         if ($i -eq 4 -and -not $step.Ok) {
-            Write-SpectreHost "[Yellow bold]→ Interactive: prompts[/] [Yellow][[V]] Never run  [[D]] Do not run  [[R]] Run once  [[A]] Always run[/]"
+            Write-SpectreHost "[$($c.Warn) bold]→ Interactive: prompts[/] [$($c.Warn)][[V]] Never run  [[D]] Do not run  [[R]] Run once  [[A]] Always run[/]"
             Write-SpectreHost "[$($c.Fail) bold]→ Non-interactive:[/] [$($c.Fail)]fails, nobody can answer the prompt (AuthorizationManager check failed)[/]"
             return
         }

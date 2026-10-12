@@ -13,6 +13,9 @@ step. Use Get-DemoStep and Set-DemoStep to jump around.
 
 .PARAMETER Stop
 Start the queue at this segment number instead of the beginning.
+
+.PARAMETER LightMode
+Use colours that are readable on a light terminal background.
 #>
 
 using namespace System.Security.Cryptography.X509Certificates
@@ -22,10 +25,15 @@ param (
     [Parameter()]
     [ValidateRange(0, 7)]
     [int]
-    $Stop = 0
+    $Stop = 0,
+
+    [Parameter()]
+    [switch]
+    $LightMode
 )
 
 Import-Module (Join-Path $PSScriptRoot 'DemoKit') -Force -Global
+Set-DemoTheme -LightMode:$LightMode
 
 $config = Get-DemoConfig
 
@@ -48,8 +56,9 @@ if ($Stop) {
 Set-Location -LiteralPath (Get-DemoPath state, work)
 
 Function global:prompt {
-    $dev = "$($PSStyle.Foreground.BrightGreen)🐧 dev$($PSStyle.Reset)"
-    $location = "$($PSStyle.Foreground.BrightBlack)$(Split-Path -Leaf $PWD)$($PSStyle.Reset)"
+    $theme = Get-DemoTheme
+    $dev = "$($theme.PromptHost)🐧 dev$($PSStyle.Reset)"
+    $location = "$($theme.PromptLocation)$(Split-Path -Leaf $PWD)$($PSStyle.Reset)"
     "`n$dev $location ❯ "
 }
 

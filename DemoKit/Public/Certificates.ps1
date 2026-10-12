@@ -202,7 +202,9 @@ Function Show-Certificate {
 
         $lifetime = Format-Duration ($Certificate.NotAfter - $Certificate.NotBefore)
         $expired = $Certificate.NotAfter -lt [DateTime]::Now
-        $validity = "$($Certificate.NotBefore.ToString('yyyy-MM-dd HH:mm')) → $($Certificate.NotAfter.ToString('yyyy-MM-dd HH:mm')) [$dim]($lifetime)[/]"
+        $validFrom = $Certificate.NotBefore.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $validTo = $Certificate.NotAfter.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        $validity = "$validFrom → $validTo UTC [$dim]($lifetime)[/]"
         if ($expired) {
             $validity += " [$($script:Colors.Fail)]EXPIRED[/]"
         }

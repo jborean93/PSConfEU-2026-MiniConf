@@ -167,6 +167,7 @@ Function Get-SignatureTimestamp {
                     Time = $token.TokenInfo.Timestamp
                     Certificate = $tsaCms.SignerInfos[0].Certificate
                     MessageHash = [Convert]::ToHexString($token.TokenInfo.GetMessageHash().ToArray())
+                    MessageHashAlgorithm = [HashAlgorithmName]::FromOid($token.TokenInfo.HashAlgorithmId.Value)
                 }
             }
         }
@@ -183,18 +184,8 @@ Function Get-SignatureTimestamp {
             Time = [DateTimeOffset]$signingTime
             Certificate = $counter.Certificate
             MessageHash = $null
+            MessageHashAlgorithm = $null
         }
-    }
-}
-
-Function Format-Hex {
-    param ([string]$Hex, [int]$Length = 8)
-
-    if ($Hex.Length -le ($Length * 2)) {
-        $Hex
-    }
-    else {
-        "$($Hex.Substring(0, $Length))…$($Hex.Substring($Hex.Length - $Length))"
     }
 }
 
@@ -202,6 +193,12 @@ Function New-TreeNode {
     param ([object]$Value, [object[]]$Children = @())
 
     @{ Value = $Value; Children = @($Children | Where-Object { $null -ne $_ }) }
+}
+
+Function Format-Check {
+    param ([bool]$Ok)
+
+    if ($Ok) { "[$($script:Colors.Pass)]verified[/]" } else { "[$($script:Colors.Fail)]does not match[/]" }
 }
 
 Function Show-AuthenticodeAnatomy {
@@ -236,7 +233,7 @@ Function Show-AuthenticodeAnatomy {
     $timestamp = Get-SignatureTimestamp -SignerInfo $signer
 
     # WHAT
-    $whatSummary = "[$($c.What) bold]WHAT[/] was signed?  [$($c.What)]$($digest.HashAlgorithm.Name) $(Format-Hex $digest.Digest)[/]"
+    $whatSummary = "[$($c.What) bold]WHAT[/] was signed?     [$($c.What)]$($digest.HashAlgorithm.Name) $($digest.Digest)[/]"
     $whatChildren = if ($Expand -contains 'What') {
         $sipName = if ($digest.SipGuid -and $script:KnownSip.ContainsKey("$($digest.SipGuid)")) {
             $script:KnownSip["$($digest.SipGuid)"]
@@ -247,21 +244,21 @@ Function Show-AuthenticodeAnatomy {
 
         @(
             New-TreeNode "Content type: SpcIndirectDataContent [$($c.Dim)]$($cms.ContentInfo.ContentType.Value)[/]"
-            New-TreeNode "Subject interface: $sipName [$($c.Dim)]{$($digest.SipGuid)}[/]"
-            New-TreeNode "Digest: [$($c.What)]$($digest.HashAlgorithm.Name) $($digest.Digest)[/]"
+            New-TreeNode "Subject interface package: $sipName [$($c.Dim)]{$($digest.SipGuid)}[/]"
+            New-TreeNode "File digest: [$($c.What)]$($digest.HashAlgorithm.Name) $($digest.Digest)[/]"
         )
     }
 
     # WHO
-    $whoSummary = "[$($c.Who) bold]WHO[/] signed it?    [$($c.Who)]$(& $e $signer.Certificate.Subject)[/]"
+    $whoSummary = "[$($c.Who) bold]WHO[/] signed it?       [$($c.Who)]$(& $e $signer.Certificate.Subject)[/]"
     $whoChildren = if ($Expand -contains 'Who') {
         $embedded = @($cms.Certificates)
         $certNodes = foreach ($cert in $embedded) {
             $lifetime = Format-Duration ($cert.NotAfter - $cert.NotBefore)
-            $ekus = @(Format-Eku -Certificate $cert | ForEach-Object { & $e $_.Name }) -join ', '
+            $ekus = @(Format-Eku -Certificate $cert | ForEach-Object { "$(& $e $_.Name) [$($c.Dim)]$($_.Oid)[/]" }) -join ', '
             New-TreeNode "[$($c.Who)]$(& $e $cert.Subject)[/]" @(
                 New-TreeNode "Issued by: $(& $e $cert.Issuer)"
-                New-TreeNode "Valid: $($cert.NotBefore.ToString('yyyy-MM-dd HH:mm')) → $($cert.NotAfter.ToString('yyyy-MM-dd HH:mm')) [$($c.Dim)]($lifetime)[/]"
+                New-TreeNode "Valid: $($cert.NotBefore.ToString('yyyy-MM-dd HH:mm')) to $($cert.NotAfter.ToString('yyyy-MM-dd HH:mm')) [$($c.Dim)]($lifetime)[/]"
                 if ($ekus) { New-TreeNode "EKU: $ekus" }
                 New-TreeNode "Thumbprint: [$($c.Dim)]$($cert.Thumbprint)[/]"
             )
@@ -275,6 +272,9 @@ Function Show-AuthenticodeAnatomy {
             New-TreeNode "[$($c.Fail)]Root not embedded:[/] $(& $e $top.Issuer) [$($c.Dim)]- this machine must already trust it[/]"
         }
 
+        # messageDigest covers the whole WHAT block (SIP info plus the file
+        # digest), so it is expected to differ from the file digest.
+        $hashAlgo = [HashAlgorithmName]::FromOid($signer.DigestAlgorithm.Value)
         $messageDigest = $signer.SignedAttributes |
             Where-Object { $_.Oid.Value -eq '1.2.840.113549.1.9.4' } |
             ForEach-Object {
@@ -282,40 +282,50 @@ Function Show-AuthenticodeAnatomy {
                 $md.CopyFrom($_.Values[0])
                 [Convert]::ToHexString($md.MessageDigest)
             }
+        $whatHash = [Convert]::ToHexString([CryptographicOperations]::HashData($hashAlgo, $cms.ContentInfo.Content))
 
         @(
             New-TreeNode "Embedded certificates ($($embedded.Count))" $certNodes
             $rootNote
             New-TreeNode 'SignerInfo' @(
-                New-TreeNode "Signed attribute messageDigest = H([$($c.What)]WHAT[/]) [$($c.Dim)]$(Format-Hex $messageDigest)[/]"
-                New-TreeNode "Signature = Sign(H(signed attributes)) [$($c.Dim)]$($signer.SignatureAlgorithm.FriendlyName), $($signer.GetSignature().Length) bytes[/]"
+                New-TreeNode "Signed attribute messageDigest: [$($c.Dim)]$messageDigest[/]" @(
+                    New-TreeNode "= $($hashAlgo.Name) of the whole [$($c.What)]WHAT[/] block, not the file, so it differs from the file digest: $(Format-Check ($messageDigest -eq $whatHash))"
+                )
+                New-TreeNode "Signature: $($signer.SignatureAlgorithm.FriendlyName) over $($hashAlgo.Name) of the signed attributes [$($c.Dim)]($($signer.GetSignature().Length) bytes)[/]"
             )
         ) | Where-Object { $_ }
     }
 
     # WHEN
     $whenSummary = if ($timestamp) {
-        "[$($c.When) bold]WHEN[/] was it signed? [$($c.When)]$($timestamp.Time.UtcDateTime.ToString('yyyy-MM-dd HH:mm:ss')) UTC[/]"
+        "[$($c.When) bold]WHEN[/] was it signed?   [$($c.When)]$($timestamp.Time.UtcDateTime.ToString('yyyy-MM-dd HH:mm:ss')) UTC[/]"
     }
     else {
-        "[$($c.When) bold]WHEN[/] was it signed? [$($c.Fail)]no timestamp[/]"
+        "[$($c.When) bold]WHEN[/] was it signed?   [$($c.Fail)]no timestamp[/]"
     }
     $whenChildren = if ($Expand -contains 'When') {
         if ($timestamp) {
-            @(
+            $tsaNodes = @(
                 New-TreeNode "Type: $($timestamp.Type) [$($c.Dim)](unsigned attribute, added after signing)[/]"
                 New-TreeNode "Authority: [$($c.When)]$(& $e $timestamp.Certificate.Subject)[/]"
-                if ($timestamp.MessageHash) {
-                    New-TreeNode "Countersigns: H([$($c.Who)]Signature[/]) [$($c.Dim)]$(Format-Hex $timestamp.MessageHash)[/]"
-                }
             )
+            if ($timestamp.MessageHash) {
+                # The TSA signs a hash of the signature value from WHO, it
+                # vouches that this exact signature existed at that time.
+                $signatureHash = [Convert]::ToHexString(
+                    [CryptographicOperations]::HashData($timestamp.MessageHashAlgorithm, $signer.GetSignature()))
+                $tsaNodes += New-TreeNode "Timestamped hash: [$($c.Dim)]$($timestamp.MessageHash)[/]" @(
+                    New-TreeNode "= $($timestamp.MessageHashAlgorithm.Name) of the [$($c.Who)]WHO[/] signature value, the TSA vouches that this exact signature existed at that time: $(Format-Check ($timestamp.MessageHash -eq $signatureHash))"
+                )
+            }
+            $tsaNodes
         }
         else {
             New-TreeNode "[$($c.Fail)]The signature is only valid while the signing certificate is[/]"
         }
     }
 
-    $tree = New-TreeNode "📜 [bold]SignedData (PKCS #7)[/] [$($c.Dim)]$(& $e (Split-Path -Leaf $Path))[/]" @(
+    $tree = New-TreeNode "[bold]SignedData (CMS / PKCS #7)[/] [$($c.Dim)]$(& $e (Split-Path -Leaf $Path))[/]" @(
         New-TreeNode $whatSummary $whatChildren
         New-TreeNode $whoSummary $whoChildren
         New-TreeNode $whenSummary $whenChildren
@@ -343,7 +353,7 @@ Function Compare-ScriptDigest {
 
     $match = $stored.Digest -eq $computed
     $resultColor = if ($match) { $c.Pass } else { $c.Fail }
-    $result = if ($match) { '✅ match' } else { '❌ HashMismatch' }
+    $result = if ($match) { 'Match' } else { 'HashMismatch' }
 
     $rows = @(
         [PSCustomObject]@{ Source = 'Stored in signature'; Digest = "[$($c.What)]$($stored.Digest)[/]" }

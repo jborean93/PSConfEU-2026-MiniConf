@@ -110,7 +110,9 @@ Function Write-DemoStep {
     $script:DemoIndex++
 
     [PSConsoleReadLine]::RevertLine()
-    [PSConsoleReadLine]::Insert("# $($step.Title)`n$($step.Code)")
+    # Start with a blank line so the step's block comment begins on its own
+    # line under the prompt, the title is only used by Get-DemoStep.
+    [PSConsoleReadLine]::Insert("`n$($step.Code)")
 }
 
 Function Register-DemoKeyHandler {

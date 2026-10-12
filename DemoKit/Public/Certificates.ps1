@@ -224,6 +224,17 @@ Function Show-Certificate {
             "[bold]Thumbprint[/]  [$who]$($Certificate.Thumbprint)[/]"
         )
 
+        # Artifact Signing certs carry an EKU unique to the certificate
+        # profile, it stays the same when the cert (and thumbprint) changes
+        # every day.
+        $identity = Format-Eku -Certificate $Certificate |
+            Where-Object Name -EQ 'Artifact Signing durable identity' |
+            Select-Object -First 1
+        if ($identity) {
+            $lines += "[bold]Identity[/]    [$who bold]$($identity.Oid)[/]"
+            $lines += "            [$dim]unique to the certificate profile, the same on every certificate it issues[/]"
+        }
+
         $panelHeader = if ($Header) { $Header } else { $Certificate.GetNameInfo('SimpleName', $false) }
         Format-SpectrePanel -Data ($lines -join "`n") -Header (& $e $panelHeader) -Color $who -Expand
     }
@@ -267,31 +278,39 @@ Function New-CountdownSignature {
         Thumbprint = $cert.Thumbprint
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:StatePath 'countdown.json')
 
-    Show-Certificate -Certificate $cert -Header '⏳ Countdown certificate'
+    Show-Certificate -Certificate $cert -Header 'Countdown certificate'
 }
 
-Function Get-CountdownPrompt {
+Function Wait-CountdownExpiry {
     <#
     .SYNOPSIS
-    Short countdown text for the prompt, empty until New-CountdownSignature
-    has run.
+    Makes sure the countdown certificate has expired, waiting with a spinner
+    if the talk ran faster than CountdownMinutes.
     #>
     [CmdletBinding()]
     param ()
 
     $path = Join-Path $script:StatePath 'countdown.json'
     if (-not (Test-Path -LiteralPath $path)) {
-        return ''
+        throw 'No countdown certificate found, New-CountdownSignature was not run'
     }
 
     # ConvertFrom-Json already turns the ISO string into a DateTime.
     $notAfter = [DateTimeOffset](Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).NotAfter
     $remaining = $notAfter - [DateTimeOffset]::UtcNow
     if ($remaining -gt [TimeSpan]::Zero) {
-        $text = '{0:D2}:{1:D2}' -f [int][Math]::Floor($remaining.TotalMinutes), $remaining.Seconds
-        "$($PSStyle.Foreground.FromRgb(255, 215, 0))⏳ $text$($PSStyle.Reset) "
+        $statusParams = @{
+            Title = "Waiting $([int]$remaining.TotalSeconds + 1) seconds for the countdown certificate to expire"
+            Spinner = 'Dots'
+            Color = $script:Colors.When
+            ScriptBlock = {
+                while ([DateTimeOffset]::UtcNow -le $notAfter) {
+                    Start-Sleep -Milliseconds 500
+                }
+            }.GetNewClosure()
+        }
+        Invoke-SpectreCommandWithStatus @statusParams
     }
-    else {
-        "$($PSStyle.Foreground.BrightRed)💀 expired$($PSStyle.Reset) "
-    }
+
+    Write-SpectreHost "[$($script:Colors.When)]The countdown certificate expired at $($notAfter.ToLocalTime().ToString('HH:mm:ss'))[/]"
 }

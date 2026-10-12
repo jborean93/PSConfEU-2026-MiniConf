@@ -11,12 +11,22 @@ Function Show-TrustTrace {
 
     .PARAMETER Path
     The path to the script on prod, relative to the prod demo folder.
+
+    .PARAMETER ExecutionPolicy
+    Evaluate the decision for this execution policy instead of the prod
+    session's policy, e.g. when the script is run with
+    'pwsh -ExecutionPolicy AllSigned'.
     #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory, Position = 0)]
         [string]
         $Path,
+
+        [Parameter()]
+        [ValidateSet('AllSigned', 'RemoteSigned', 'Unrestricted', 'Bypass', 'Restricted')]
+        [string]
+        $ExecutionPolicy,
 
         [Parameter()]
         [int]
@@ -26,7 +36,8 @@ Function Show-TrustTrace {
     $c = $script:Colors
     $e = { Get-SpectreEscapedText "$args" }
 
-    # Keep this CLM friendly, no method calls on non-core types.
+    # Keep this CLM friendly, no method calls on non-core types and no
+    # [PSCustomObject] casts, return a hashtable instead.
     $facts = Invoke-Prod {
         param ($ProdPath, $Path)
 
@@ -42,7 +53,7 @@ Function Show-TrustTrace {
         $trusted = Get-ChildItem Cert:\CurrentUser\TrustedPublisher, Cert:\LocalMachine\TrustedPublisher -ErrorAction SilentlyContinue |
             Where-Object Thumbprint -eq $thumbprint
 
-        [PSCustomObject]@{
+        @{
             ExecutionPolicy = "$(Get-ExecutionPolicy)"
             Zone = "$zone"
             Status = "$($sig.Status)"
@@ -53,6 +64,10 @@ Function Show-TrustTrace {
             TrustedPublisher = [bool]$trusted
         }
     } $script:Config.ProdPath $Path
+
+    if ($ExecutionPolicy) {
+        $facts.ExecutionPolicy = $ExecutionPolicy
+    }
 
     $zoneId = if ($facts.Zone -match 'ZoneId=(\d)') { [int]$Matches[1] } else { 0 }
     $isRemote = $zoneId -ge 3
@@ -77,7 +92,7 @@ Function Show-TrustTrace {
         $step = $steps[$i]
         Start-Sleep -Milliseconds $DelayMilliseconds
 
-        $mark = if ($step.Ok) { "[$($c.Pass)]✅[/]" } else { "[$($c.Fail)]❌[/]" }
+        $mark = if ($step.Ok) { "[$($c.Pass)]yes[/]" } else { "[$($c.Fail)]no [/]" }
         $tag = "[$($step.Color) bold]$($step.Tag.PadRight(6))[/]"
         Write-SpectreHost "$tag $($step.Question.PadRight(48)) $mark [$($c.Dim)]$(& $e $step.Detail)[/]"
 
@@ -90,8 +105,8 @@ Function Show-TrustTrace {
             return
         }
         if ($i -eq 4 -and -not $step.Ok) {
-            Write-SpectreHost "[Yellow bold]→ Prompt: [[V]] Never run [[D]] Do not run [[R]] Run once [[A]] Always run[/]"
-            Write-SpectreHost "[$($c.Dim)]  (non-interactive: fails, nobody is there to answer)[/]"
+            Write-SpectreHost "[Yellow bold]→ Interactive: prompts[/] [Yellow][[V]] Never run  [[D]] Do not run  [[R]] Run once  [[A]] Always run[/]"
+            Write-SpectreHost "[$($c.Fail) bold]→ Non-interactive:[/] [$($c.Fail)]fails, nobody can answer the prompt (AuthorizationManager check failed)[/]"
             return
         }
     }

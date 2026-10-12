@@ -50,7 +50,7 @@ Set-Location -LiteralPath (Get-DemoPath state, work)
 Function global:prompt {
     $dev = "$($PSStyle.Foreground.BrightGreen)🐧 dev$($PSStyle.Reset)"
     $location = "$($PSStyle.Foreground.BrightBlack)$(Split-Path -Leaf $PWD)$($PSStyle.Reset)"
-    "`n$dev $(Get-CountdownPrompt)$location ❯ "
+    "`n$dev $location ❯ "
 }
 
 Show-Stop $Stop

@@ -54,10 +54,8 @@ jobs:
     name: Sign
     needs: build
     runs-on: ubuntu-latest
-    # The Entra federated credential is bound to this environment. Its subject
-    # uses GitHub's immutable format with the owner and repo IDs, get it with:
-    #   curl -s https://api.github.com/repos/OWNER/REPO |
-    #     jq -r '"repo:\(.owner.login)@\(.owner.id)/\(.name)@\(.id):environment:signing"'
+    # The Entra federated credential is bound to this environment. No other stage can
+    # use the Entra app that is allowed to sign the scripts.
     environment: signing
     permissions:
       id-token: write  # lets the job request a GitHub OIDC token

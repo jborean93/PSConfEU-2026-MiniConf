@@ -189,7 +189,7 @@ Function Write-ProdBanner {
     [CmdletBinding()]
     param ()
 
-    Write-SpectreHost "[$($script:Colors.Trust)]🪟 prod[/] [$($script:Colors.Dim)]($($script:Config.ProdUserName)@$($script:Config.ProdComputerName))[/]"
+    Write-SpectreHost "[$($script:Colors.Trust)]prod[/] [$($script:Colors.Dim)]($($script:Config.ProdUserName)@$($script:Config.ProdComputerName))[/]"
 }
 
 Function Invoke-Prod {
@@ -249,7 +249,7 @@ Function Copy-ToProd {
     }
 
     $names = ($source | Split-Path -Leaf) -join ', '
-    Write-SpectreHost "[$($script:Colors.Dim)]📤 $(Get-SpectreEscapedText $names) → prod:$(Get-SpectreEscapedText "$($script:Config.ProdPath)/$Destination")[/]"
+    Write-SpectreHost "[$($script:Colors.Dim)]copied $(Get-SpectreEscapedText $names) → prod:$(Get-SpectreEscapedText "$($script:Config.ProdPath)/$Destination")[/]"
 }
 
 Function Set-ProdWdac {
@@ -284,10 +284,30 @@ Function Set-ProdWdac {
 
     if ($State -eq 'Enforced') {
         Copy-ToProd -Path (Join-Path $script:RepoRoot 'tools' 'Enable-DemoWdac.ps1') -Destination 'policy/'
-        Invoke-Prod -ErrorAction Stop {
-            param ($ProdPath)
-            & "$ProdPath/policy/Enable-DemoWdac.ps1" -CertificatePath "$ProdPath/certs/CA.cer"
-        } $prodPath
+
+        # Building the policy takes a while, show a spinner while it runs.
+        Write-ProdBanner
+        $session = Get-ProdSession
+        $statusParams = @{
+            Title = 'Building the WDAC policy on prod and applying it with CiTool'
+            Spinner = 'Dots'
+            Color = $script:Colors.Trust
+            ScriptBlock = {
+                $invokeParams = @{
+                    Session = $session
+                    ScriptBlock = {
+                        param ($ProdPath)
+                        & "$ProdPath/policy/Enable-DemoWdac.ps1" -CertificatePath "$ProdPath/certs/CA.cer"
+                    }
+                    ArgumentList = $prodPath
+                    HideComputerName = $true
+                    ErrorAction = 'Stop'
+                }
+                Invoke-Command @invokeParams
+            }.GetNewClosure()
+        }
+        $policy = Invoke-SpectreCommandWithStatus @statusParams
+        Write-SpectreHost "[$($script:Colors.Pass)]WDAC policy '$($policy.PolicyName)' enforced[/] [$($script:Colors.Dim)]$($policy.PolicyId)[/]"
 
         # Language mode is decided when the process starts, reconnect so the
         # next Invoke-Prod runs under the policy.
@@ -329,40 +349,48 @@ Function Wait-ProdReboot {
     $dim = $script:Colors.Dim
     $hostName = $script:Config.ProdComputerName
     $start = [DateTime]::UtcNow
-    $testParams = @{
-        TargetName = $hostName
-        TcpPort = 22
-        TimeoutSeconds = 1
-        Quiet = $true
-    }
 
-    Write-SpectreHost "[$dim]🔄 prod is rebooting...[/]"
-    while (Test-Connection @testParams) {
-        if (([DateTime]::UtcNow - $start).TotalSeconds -gt 60) {
-            throw 'Prod did not go down for the reboot'
-        }
-        Start-Sleep -Seconds 1
-    }
-
-    while ($true) {
-        if (([DateTime]::UtcNow - $start).TotalSeconds -gt $TimeoutSeconds) {
-            throw "Prod did not come back within $TimeoutSeconds seconds"
-        }
-
-        # sshd can accept connections before the user session is usable,
-        # keep trying until a session opens.
-        if (Test-Connection @testParams) {
-            try {
-                $null = Get-ProdSession
-                break
+    $statusParams = @{
+        Title = 'Prod is rebooting'
+        Spinner = 'Dots'
+        Color = $script:Colors.Trust
+        ScriptBlock = {
+            $testParams = @{
+                TargetName = $hostName
+                TcpPort = 22
+                TimeoutSeconds = 1
+                Quiet = $true
             }
-            catch {
-                Reset-ProdSession
+
+            while (Test-Connection @testParams) {
+                if (([DateTime]::UtcNow - $start).TotalSeconds -gt 60) {
+                    throw 'Prod did not go down for the reboot'
+                }
+                Start-Sleep -Seconds 1
             }
-        }
-        Start-Sleep -Seconds 2
+
+            while ($true) {
+                if (([DateTime]::UtcNow - $start).TotalSeconds -gt $TimeoutSeconds) {
+                    throw "Prod did not come back within $TimeoutSeconds seconds"
+                }
+
+                # sshd can accept connections before the user session is
+                # usable, keep trying until a session opens.
+                if (Test-Connection @testParams) {
+                    try {
+                        $null = Get-ProdSession
+                        break
+                    }
+                    catch {
+                        Reset-ProdSession
+                    }
+                }
+                Start-Sleep -Seconds 2
+            }
+        }.GetNewClosure()
     }
+    Invoke-SpectreCommandWithStatus @statusParams
 
     $elapsed = [int]([DateTime]::UtcNow - $start).TotalSeconds
-    Write-SpectreHost "[$($script:Colors.Pass)]✅ prod is back[/] [$dim]($elapsed seconds)[/]"
+    Write-SpectreHost "[$($script:Colors.Pass)]Prod is back[/] [$dim]($elapsed seconds)[/]"
 }

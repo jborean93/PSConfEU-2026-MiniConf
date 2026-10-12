@@ -15,13 +15,15 @@ Demos for my PSConfEU 2026 MiniConf talk. Everything runs in a terminal: a
 ./tools/Initialize-Demo.ps1 -ComputerName 192.168.64.18 -Credential vagrant
 ```
 
-This writes the local config, creates the demo certificates and a demo only SSH
-config in `state/ssh` with a `win-prod` alias (`ssh -F state/ssh/config
-win-prod`, the demo shell does this for you with `ssh win-prod`). On prod it
-sets up SSH key auth, pwsh as the default shell and the PowerShell SSH
-subsystem, and trusts the demo root CA. Files on prod are kept under
-`C:\PSConfEU-MiniConf`. `Set-ProdWdac Enforced` creates and applies the WDAC
-policy live, `Set-ProdWdac Absent` removes it and reboots prod.
+This writes `demo.config.psd1` with the prod host and user, the other settings
+are defaults in `DemoKit/DemoKit.psm1` that the file can override. It creates
+the demo certificates and a demo only SSH config in `state/ssh` with a
+`win-prod` alias (`ssh -F state/ssh/config win-prod`, the demo shell does this
+for you with `ssh win-prod`). On prod it sets up SSH key auth, pwsh as the
+default shell and the PowerShell SSH subsystem, and trusts the demo root CA.
+Files on prod are kept under `C:\PSConfEU-MiniConf`. `Set-ProdWdac Enforced`
+creates and applies the WDAC policy live, `Set-ProdWdac Absent` removes it and
+reboots prod.
 
 The CI segment uses `.github/workflows/sign.yml`, triggered by publishing a
 `vX.Y.Z` release from the browser during the talk. The repo must be public so

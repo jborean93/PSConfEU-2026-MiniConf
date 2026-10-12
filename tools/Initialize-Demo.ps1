@@ -8,7 +8,7 @@ One time setup for the demo environment.
 .DESCRIPTION
 Writes the local, git ignored, files the demos need and prepares prod:
 
-    demo.config.psd1  Prod host and other machine specific values
+    demo.config.psd1  Prod host and user
     state/certs       Demo root CA, Signer and SignerRenewed certs
     state/ssh         Demo only ed25519 key, SSH config with the 'win-prod'
                       alias, pinned known_hosts and the askpass helper
@@ -41,14 +41,8 @@ searched for the account.
 The Windows host used as prod.
 
 .PARAMETER Credential
-The admin account on prod. The password is only used for the first SSH
-connection, before the demo key is authorized.
-
-.PARAMETER GitHubRepo
-The GitHub repo running the release workflow.
-
-.PARAMETER TimeStampServer
-RFC 3161 timestamp server used for local signing.
+The admin account on prod. The user name is used for SSH, the password only
+for the first SSH connection before the demo key is authorized.
 
 .PARAMETER ArtifactSigningAccount
 The Artifact Signing account name, the subscription, resource group, and
@@ -76,14 +70,6 @@ param (
 
     [Parameter()]
     [string]
-    $GitHubRepo = 'jborean93/PSConfEU-2026-MiniConf',
-
-    [Parameter()]
-    [string]
-    $TimeStampServer = 'http://timestamp.digicert.com',
-
-    [Parameter()]
-    [string]
     $ArtifactSigningAccount,
 
     [Parameter()]
@@ -108,18 +94,17 @@ if ([bool]$ArtifactSigningAccount -ne [bool]$ArtifactSigningProfile) {
 $root = Split-Path -Path $PSScriptRoot -Parent
 $UserName = $Credential.UserName
 
-# Local config, read by DemoKit on import.
+# Machine specific config, read by DemoKit on import on top of its defaults.
 Write-Host 'Writing demo.config.psd1'
 @"
 @{
     ProdComputerName = '$ComputerName'
     ProdUserName = '$UserName'
-    TimeStampServer = '$TimeStampServer'
-    GitHubRepo = '$GitHubRepo'
 }
 "@ | Set-Content -LiteralPath (Join-Path $root 'demo.config.psd1')
 
 Import-Module (Join-Path $root 'DemoKit') -Force
+$GitHubRepo = (Get-DemoConfig).GitHubRepo
 
 # Demo PKI
 $caPath = Get-DemoPath state, certs, CA.pfx

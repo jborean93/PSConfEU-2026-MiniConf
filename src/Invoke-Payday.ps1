@@ -6,6 +6,6 @@ param (
     $Amount = 1000
 )
 
-foreach ($employee in 'Alice', 'Bob', 'Carol') {
+foreach ($employee in 'Jordan', 'Gael', 'Geoffroy') {
     "Paying $employee `$$Amount"
 }

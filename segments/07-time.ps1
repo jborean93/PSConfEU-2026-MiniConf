@@ -6,17 +6,35 @@ Show-Stop 7
 #endregion
 
 #region The countdown certificate
-Show-Certificate (Get-DemoCertificate Countdown -PublicOnly)
+<#
+The certificate created at the very start of the talk. Make sure it has
+expired, waiting if the talk ran faster than 25 minutes, then look at it.
+#>
+Wait-CountdownExpiry
+Show-Certificate (Get-PfxCertificate -FilePath ../certs/Countdown.cer)
 #endregion
 
 #region Moment of truth
 # NOTE: Poll first: which one survives?
-Invoke-Prod { Get-ChildItem .\countdown\*.ps1 | Get-AuthenticodeSignature }
+<#
+Both scripts were signed with that certificate while it was still valid, one
+with a timestamp and one without. Ask Windows about both now, as a list so the
+full status message is shown.
+#>
+Invoke-Prod {
+    Get-ChildItem .\countdown\*.ps1 |
+        Get-AuthenticodeSignature |
+        Select-Object Path, Status, StatusMessage
+} | Format-List
 #endregion
 
 #region Why: the timestamp
-# NOTE: The TSA vouched that the signature existed while the cert was valid.
 # NOTE: Trivia: the Lifetime Signing EKU (1.3.6.1.4.1.311.10.3.13) opts out of this.
+<#
+The timestamp authority vouched that the signature existed while the
+certificate was still valid, so the signature stays valid after the
+certificate expires. Without a timestamp, it dies with the certificate.
+#>
 Show-AuthenticodeAnatomy ./countdown/WithTimestamp.ps1 -Expand When
 Show-AuthenticodeAnatomy ./countdown/NoTimestamp.ps1 -Expand When
 #endregion

@@ -108,10 +108,13 @@ Copy-Item -LiteralPath (Join-Path $wdacSrc Payday.ps1) -Destination (Join-Path $
 Copy-Item -LiteralPath (Join-Path $wdacSrc Payday.ps1) -Destination (Join-Path $wdacWork Signed.ps1)
 Copy-Item -LiteralPath (Join-Path $wdacSrc PaydayWithHelper.ps1) -Destination $wdacWork
 Copy-Item -LiteralPath (Join-Path $wdacSrc Helper.ps1) -Destination $wdacWork
+Copy-Item -LiteralPath (Join-Path $wdacSrc ClmSafe.ps1) -Destination $wdacWork
+Copy-Item -LiteralPath (Join-Path $wdacSrc Invoke-PayrollFormula.ps1) -Destination $wdacWork
 
 $toSign = @(
     Join-Path $wdacWork Signed.ps1
     Join-Path $wdacWork PaydayWithHelper.ps1
+    Join-Path $wdacWork Invoke-PayrollFormula.ps1
 )
 Set-OpenAuthenticodeSignature -LiteralPath $toSign -Certificate $signer -TimeStampServer $config.TimeStampServer
 
@@ -150,8 +153,9 @@ Invoke-Prod -ErrorAction Stop {
 
 Copy-ToProd -Path (Join-Path $wdacWork '*') -Destination 'wdac/'
 
+# A hashtable as [PSCustomObject] isn't allowed if WDAC is still enforced.
 $state = Invoke-Prod {
-    [PSCustomObject]@{
+    @{
         LanguageMode = "$($ExecutionContext.SessionState.LanguageMode)"
         ExecutionPolicy = "$(Get-ExecutionPolicy)"
     }

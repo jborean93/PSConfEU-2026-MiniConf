@@ -2,11 +2,14 @@ Function Show-CertificateOptions {
     [CmdletBinding()]
     param ()
 
+    # Artifact Signing prices are the published Basic/Premium tiers, check
+    # https://azure.microsoft.com/pricing/details/artifact-signing/ before
+    # the talk.
     $rows = @(
-        [PSCustomObject]@{ Option = 'Self-signed'; TrustedBy = 'Only machines you import it into'; KeyLivesIn = 'Wherever you put it'; GoodFor = 'Labs, demos, learning' }
-        [PSCustomObject]@{ Option = 'Internal PKI (AD CS)'; TrustedBy = 'Machines trusting your root'; KeyLivesIn = 'Your call (HSM recommended)'; GoodFor = 'Internal automation' }
-        [PSCustomObject]@{ Option = 'Public CA'; TrustedBy = 'Everyone'; KeyLivesIn = 'HSM / token (CA/B Forum)'; GoodFor = 'Public modules' }
-        [PSCustomObject]@{ Option = 'Azure Artifact Signing'; TrustedBy = 'Everyone'; KeyLivesIn = "Microsoft's HSM"; GoodFor = 'CI pipelines, no key to lose' }
+        [PSCustomObject]@{ Option = 'Self-signed'; TrustedBy = 'Only machines you import it into'; KeyLivesIn = 'Wherever you put it'; Cost = 'Free'; GoodFor = 'Labs, demos, learning' }
+        [PSCustomObject]@{ Option = 'Internal PKI (AD CS)'; TrustedBy = 'Machines trusting your root'; KeyLivesIn = 'Your call (HSM recommended)'; Cost = 'Free, but you run and maintain the PKI'; GoodFor = 'Internal automation' }
+        [PSCustomObject]@{ Option = 'Public CA'; TrustedBy = 'Everyone'; KeyLivesIn = 'HSM / token (CA/B Forum)'; Cost = 'Hundreds of dollars a year'; GoodFor = 'Public modules' }
+        [PSCustomObject]@{ Option = 'Azure Artifact Signing'; TrustedBy = 'Windows'; KeyLivesIn = "Microsoft's HSM"; Cost = '$9.99/month (Basic), $99.99/month (Premium)'; GoodFor = 'CI pipelines, no key to lose' }
     )
     $rows | Format-SpectreTable -Color $script:Colors.Who -Title 'Where does a code signing certificate come from?'
 }
@@ -22,29 +25,60 @@ Function Show-SigningComparison {
         [PSCustomObject]@{ Step = 'Config'; SignTool = 'metadata.json + /dlib /dmdf args'; OpenAuthenticode = 'Get-OpenAuthenticodeAzTrustedSigner' }
         [PSCustomObject]@{ Step = 'Auth'; SignTool = 'Azure CLI / env vars'; OpenAuthenticode = 'Azure CLI / env vars' }
     )
-    $rows | Format-SpectreTable -Color $script:Colors.Trust -Title 'Signing with Artifact Signing in CI'
+    $rows | Format-SpectreTable -Color $script:Colors.Trust -Title 'SignTool vs OpenAuthenticode for Artifact Signing'
 }
 
 Function Show-DemoFile {
     <#
     .SYNOPSIS
     Shows a file with syntax highlighting.
+
+    .PARAMETER HideSignature
+    Collapse the Authenticode signature block so only the code is shown.
+
+    .PARAMETER SignatureLines
+    With -HideSignature, still show this many lines of the base64 block
+    before collapsing the rest.
     #>
     [CmdletBinding()]
     param (
         [Parameter(Mandatory, Position = 0)]
         [string]
-        $Path
+        $Path,
+
+        [Parameter()]
+        [switch]
+        $HideSignature,
+
+        [Parameter()]
+        [int]
+        $SignatureLines = 0
     )
 
-    if (Get-Command -Name bat -ErrorAction SilentlyContinue) {
-        bat --style=numbers,header --paging=never $Path
+    $name = Split-Path -Path $Path -Leaf
+    $text = Get-Content -LiteralPath $Path -Raw
+    if ($HideSignature) {
+        $start, $end = Get-CommentMarker -Path $Path
+        $pattern = "(?s)$([regex]::Escape("$start`SIG # Begin signature block$end"))\r?\n(.*?)$([regex]::Escape("$start`SIG # End signature block$end"))"
+        $text = [regex]::Replace($text, $pattern, {
+                param ($m)
+                $lines = @($m.Groups[1].Value -split '\r?\n' | Where-Object { $_ })
+                $shown = @($lines | Select-Object -First $SignatureLines)
+                $hidden = $lines.Count - $shown.Count
+                @(
+                    "$start`SIG # Begin signature block$end"
+                    $shown
+                    if ($hidden) { "$start... $hidden $(if ($shown) { 'more ' })lines of base64 ...$end" }
+                    "$start`SIG # End signature block$end"
+                ) -join "`n"
+            })
     }
-    elseif (Get-Command -Name Show-TextMate -ErrorAction SilentlyContinue) {
-        Show-TextMate -Path $Path
+
+    if (Get-Command -Name bat -CommandType Application -ErrorAction SilentlyContinue) {
+        $text | bat --style=numbers,header --paging=never --file-name $name
     }
     else {
-        Get-Content -LiteralPath $Path
+        $text
     }
 }
 

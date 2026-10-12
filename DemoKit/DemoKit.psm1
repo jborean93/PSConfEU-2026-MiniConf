@@ -1,0 +1,46 @@
+$ErrorActionPreference = 'Stop'
+
+$script:RepoRoot = Split-Path -Path $PSScriptRoot -Parent
+$script:StatePath = Join-Path $script:RepoRoot 'state'
+$script:CertPath = Join-Path $script:StatePath 'certs'
+$script:Config = @{
+    # Prod host and admin user, set by Initialize-Demo.ps1.
+    ProdComputerName = $null
+    ProdUserName = $null
+    # SSH alias in the demo SSH config (state/ssh/config).
+    ProdHost = 'win-prod'
+    # Folder on prod holding everything the demos and setup create (certs,
+    # policy, temp files), delete it to clean up.
+    ProdPath = 'C:/PSConfEU-MiniConf'
+    TimeStampServer = 'http://timestamp.digicert.com'
+    # Pick a value that expires before the final segment.
+    CountdownMinutes = 25
+    GitHubRepo = 'jborean93/PSConfEU-2026-MiniConf'
+    NextStepChord = 'F9'
+    PreviousStepChord = 'F8'
+}
+
+# Machine specific values written by tools/Initialize-Demo.ps1.
+$configPath = Join-Path $script:RepoRoot 'demo.config.psd1'
+if (Test-Path -LiteralPath $configPath) {
+    $localConfig = Import-PowerShellDataFile -LiteralPath $configPath
+    foreach ($entry in $localConfig.GetEnumerator()) {
+        $script:Config[$entry.Key] = $entry.Value
+    }
+}
+
+# Each Authenticode question has its own colour used throughout the talk.
+# Green/red are reserved for pass/fail.
+$script:Colors = @{
+    What = 'DeepSkyBlue1'
+    Who = 'Orchid'
+    When = 'Gold1'
+    Trust = 'Aqua'
+    Pass = 'Green'
+    Fail = 'Red'
+    Dim = 'Grey50'
+}
+
+foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'Public') -Filter '*.ps1') {
+    . $file.FullName
+}

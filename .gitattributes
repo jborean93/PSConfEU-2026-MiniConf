@@ -1,0 +1,3 @@
+# Files under src/ get signed, never let git rewrite their bytes on checkout
+# (core.autocrlf would turn LF into CRLF and break the signature).
+src/** -text

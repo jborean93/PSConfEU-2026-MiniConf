@@ -1,0 +1,132 @@
+name: release
+
+# Publishing a GitHub release with a vX.Y.Z tag builds, signs, and attaches the
+# signed module as a nupkg to that release. Each job only gets the permissions
+# it needs:
+#   build   - no secrets, runs the repo's code
+#   sign    - OIDC to Artifact Signing, only touches the build artifact
+#   release - contents: write to upload the asset, only touches the signed artifact
+
+on:
+  release:
+    types:
+    - published
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Build module
+      shell: pwsh
+      env:
+        TAG: ${{ github.event.release.tag_name }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        if ($env:TAG -notmatch '^v(\d+\.\d+\.\d+)$') {
+            throw "Release tag '$env:TAG' must be in the format vX.Y.Z"
+        }
+        $version = $Matches[1]
+
+        $out = New-Item -Path output/PaydayTools -ItemType Directory -Force
+        Copy-Item -Path src/PaydayTools/* -Destination $out
+
+        $manifest = Join-Path $out PaydayTools.psd1
+        $content = (Get-Content -LiteralPath $manifest -Raw) -replace "ModuleVersion = '0\.0\.0'", "ModuleVersion = '$version'"
+        Set-Content -LiteralPath $manifest -Value $content -NoNewline
+
+        Test-ModuleManifest -Path $manifest | Select-Object Name, Version
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PaydayTools-unsigned
+        path: output/PaydayTools/
+
+  sign:
+    name: Sign
+    needs: build
+    runs-on: ubuntu-latest
+    # The Entra federated credential is bound to this environment. Its subject
+    # uses GitHub's immutable format with the owner and repo IDs, get it with:
+    #   curl -s https://api.github.com/repos/OWNER/REPO |
+    #     jq -r '"repo:\(.owner.login)@\(.owner.id)/\(.name)@\(.id):environment:signing"'
+    environment: signing
+    permissions:
+      id-token: write  # lets the job request a GitHub OIDC token
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: PaydayTools-unsigned
+        path: PaydayTools
+
+    # No client secret, Entra ID trusts the GitHub OIDC token instead.
+    - name: Azure login
+      uses: azure/login@v3
+      with:
+        client-id: ${{ vars.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        allow-no-subscriptions: true
+
+    - name: Sign module
+      shell: pwsh
+      env:
+        AAS_ACCOUNT: ${{ vars.AAS_ACCOUNT }}
+        AAS_PROFILE: ${{ vars.AAS_PROFILE }}
+        AAS_ENDPOINT: ${{ vars.AAS_ENDPOINT }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Install-PSResource -Name OpenAuthenticode -TrustRepository
+
+        $keyParams = @{
+            AccountName = $env:AAS_ACCOUNT
+            ProfileName = $env:AAS_PROFILE
+            Endpoint = $env:AAS_ENDPOINT
+        }
+        $key = Get-OpenAuthenticodeAzTrustedSigner @keyParams
+
+        $signParams = @{
+            Path = './PaydayTools/*'
+            Key = $key
+            TimeStampServer = 'http://timestamp.acs.microsoft.com'
+        }
+        Set-OpenAuthenticodeSignature @signParams
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PaydayTools-signed
+        path: PaydayTools/
+
+  release:
+    name: Release
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # upload the release asset
+    steps:
+    - uses: actions/download-artifact@v8
+      with:
+        name: PaydayTools-signed
+        path: PaydayTools
+
+    - name: Package and upload
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ github.event.release.tag_name }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $repoPath = New-Item -Path nupkg -ItemType Directory -Force
+        Register-PSResourceRepository -Name Local -Uri $repoPath.FullName -Trusted
+        Publish-PSResource -Path ./PaydayTools -Repository Local
+
+        $nupkg = Get-ChildItem -Path nupkg -Filter *.nupkg
+        gh release upload $env:TAG $nupkg.FullName --repo $env:GITHUB_REPOSITORY

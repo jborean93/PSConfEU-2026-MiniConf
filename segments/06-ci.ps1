@@ -30,6 +30,26 @@ into a nupkg and attaches it to the GitHub release.
 Show-DemoFile (Get-DemoPath .github, workflows, sign.yml)
 #endregion
 
+#region Entra trusts the workflow
+# NOTE: The subject pins the repo and the signing environment, nothing else gets a token.
+<#
+The Entra app registration has a federated credential instead of a secret. It
+trusts GitHub's OIDC issuer, but only for tokens issued to this repo when a
+job runs in the signing environment.
+#>
+Show-DemoImage (Get-DemoPath DemoKit, assets, entra-federated-credential-gha.png) -ClearScreen
+#endregion
+
+#region The signing environment
+# NOTE: Only v* tags can deploy to signing, the secrets are just IDs.
+<#
+The signing environment on GitHub. A deployment ruleset limits which tags can
+run jobs in it, and its secrets are only the tenant, client, and subscription
+IDs, nothing that could sign on its own.
+#>
+Show-DemoImage (Get-DemoPath DemoKit, assets, github-environment-configuration.png) -ClearScreen
+#endregion
+
 #region Download the release on prod
 # NOTE: Browser: show the finished run and the nupkg asset on the release first.
 <#

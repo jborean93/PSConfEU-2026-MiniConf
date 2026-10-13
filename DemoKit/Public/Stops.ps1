@@ -4,6 +4,7 @@ $script:Stops = @(
         Title = 'Sign of the Times'
         Subtitle = 'PowerShell and Authenticode'
         Summary = ''
+        Image = 'sponsors.png'
     }
     @{
         Label = 'Anatomy'
@@ -110,6 +111,7 @@ Function Show-Stop {
 
     $info = $script:Stops[$Stop]
 
+    Clear-DemoImage
     Clear-Host
     Write-SpectreFigletText -Text $info.Title -Color $script:Colors.Trust | Out-Host
     Write-SpectreHost "  [italic]$(Get-SpectreEscapedText $info.Subtitle)[/]"
@@ -118,5 +120,9 @@ Function Show-Stop {
     Write-SpectreHost ''
     if ($info.Summary) {
         Format-SpectrePanel -Data (Get-SpectreEscapedText $info.Summary) -Color $script:Colors.Dim -Expand | Out-Host
+    }
+    if ($info.Image) {
+        $imagePath = Join-Path $PSScriptRoot '..' 'assets' $info.Image
+        Show-DemoImage -Path $imagePath -ReservedRows ([Console]::CursorTop + 1)
     }
 }
